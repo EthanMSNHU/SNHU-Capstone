@@ -1,0 +1,5 @@
+cd src\desktop
+g++ -std=c++17 thermostat_enhanced.cpp -DUSE_SQLITE -lsqlite3 -O2 -o thermostat.exe
+.\thermostat.exe 
+
+to build the desktop simulation for the thermostat.
