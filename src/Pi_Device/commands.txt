@@ -2,3 +2,16 @@ cd OneDrive\Capstone
 cd src\Pi_Device
 g++ -std=c++17 thermostat_pi.cpp -DUSE_SQLITE -DUSE_RPI -lpigpio -pthread -lsqlite3 -O2 -o thermostat
 ./thermostat
+
+# SNHU Capstone - Thermostat (Pi Device)
+
+## Build
+```bash
+sudo apt update
+sudo apt install -y g++ sqlite3 libsqlite3-dev pigpio
+cd src/Pi_device
+g++ -std=c++17 thermostat_pi.cpp -DUSE_SQLITE -DUSE_RPI \
+    -lpigpio -pthread -lsqlite3 -O2 -o thermostat
+
+sudo ./thermostat
+
