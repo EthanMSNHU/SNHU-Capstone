@@ -26,6 +26,7 @@
     .\\thermostat.exe
 */
 
+// Block: Standard library includes for time, I/O, containers, threading, and helpers.
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -45,11 +46,13 @@
 #include <utility>
 #include <vector>
 
+// Block: Conditionally include SQLite headers when building with database support.
 #ifdef USE_SQLITE
 #include <sqlite3.h>
 #endif
 
 // ---------- Utilities ----------
+// Block: Helper functions for timestamps and HH:MM <-> minutes conversions.
 namespace util {
   inline std::string now_iso8601() {
     using namespace std::chrono;
@@ -82,6 +85,7 @@ namespace util {
 }
 
 // ---------- Core Types ----------
+// Block: Domain types and interfaces (modes, readings, state changes, sensor/actuator/datastore contracts).
 enum class Mode { Off, Heat, Cool };
 static inline const char* to_string(Mode m) {
   switch (m) { case Mode::Off: return "Off"; case Mode::Heat: return "Heat"; case Mode::Cool: return "Cool"; }
@@ -107,6 +111,7 @@ public:
 };
 
 // ---------- A&DS: RingBuffer + Moving Average ----------
+// Block: Simple fixed-capacity ring buffer and moving average filter to smooth sensor noise.
 template <typename T>
 class RingBuffer {
 public:
@@ -128,6 +133,7 @@ private:
 };
 
 // ---------- Demo Sensor ----------
+// Block: Mock sensor that drifts toward ambient temperature with small random noise (no hardware needed).
 class MockSensor : public ISensor {
 public:
   explicit MockSensor(double startF=70.0): cur_(startF) {}
@@ -141,6 +147,7 @@ private: double cur_;
 };
 
 // ---------- Actuator (print on change only) ----------
+// Block: Actuator that only prints when heat/cool state changes; can toggle console announcements.
 class ConsoleActuator : public IActuator {
 public:
   void setHeat(bool on) override {
@@ -155,6 +162,7 @@ private:
 };
 
 // ---------- Databases: CSV + SQLite ----------
+// Block: CSV-backed datastore for readings, events, and key/value settings (simple files with headers).
 class CsvStore : public IDataStore {
 public:
   explicit CsvStore(const std::string& base="thermostat_log")
@@ -188,6 +196,7 @@ private:
 };
 
 #ifdef USE_SQLITE
+// Block: SQLite-backed datastore with WAL mode; creates tables and uses prepared statements for logging and settings.
 class SqliteStore : public IDataStore {
 public:
   explicit SqliteStore(const std::string& file="thermostat.db"){
@@ -233,6 +242,7 @@ private:
 #endif
 
 // ---------- A&DS: Schedule (binary search) ----------
+// Block: Daily setpoint schedule with binary search to find current and next changes efficiently.
 struct ScheduleEntry { int minuteOfDay; double setpointF; };
 class Schedule {
 public:
@@ -259,6 +269,7 @@ private:
 };
 
 // ---------- Quiet Tick Logger ----------
+// Block: Thread-safe logger for per-tick summaries to console and/or file (toggleable).
 class TickLogger {
 public:
   explicit TickLogger(const std::string& path): path_(path) {}
@@ -277,6 +288,7 @@ private:
 };
 
 // ---------- Thermostat FSM ----------
+// Block: Main thermostat controller—reads sensor, applies filtering/schedule, controls actuators, logs, and persists settings.
 class Thermostat {
 public:
   struct Config { double setpointF=72.0; double deadbandF=1.0; Mode mode=Mode::Off; };
@@ -286,8 +298,11 @@ public:
     if (auto v=store_.loadSetting("deadbandF")) cfg_.deadbandF = std::stod(*v);
     if (auto v=store_.loadSetting("mode"))      cfg_.mode = parseMode(*v);
   }
+  // Block: Attach schedule used to compute time-based setpoints.
   void setSchedule(const Schedule& sch){ sched_ = sch; }
+  // Block: Update and persist setpoint.
   void setSetpoint(double f){ cfg_.setpointF=f; store_.saveSetting("setpointF", std::to_string(f)); }
+  // Block: Change mode, record transition, persist, and force actuators OFF when entering Off.
   void setMode(Mode m){
     if (cfg_.mode != m) store_.logStateChange({ util::now_iso8601(), cfg_.mode, m });
     cfg_.mode = m;
@@ -297,8 +312,10 @@ public:
       actuator_.setCool(false);
     }
   }
+  // Block: Update and persist deadband (hysteresis width).
   void setDeadband(double f){ cfg_.deadbandF=f; store_.saveSetting("deadbandF", std::to_string(f)); }
 
+  // Block: One-second control cycle—read/average temperature, align setpoint to schedule, run mode logic, and log.
   void tick(){
     double raw = sensor_.readFahrenheit();
     double tF  = filter_.add(raw);
@@ -323,13 +340,16 @@ public:
     if (logger_) logger_->log(tF, to_string(cfg_.mode), cfg_.setpointF, cfg_.deadbandF);
   }
 
+  // Block: Expose current config and compute next scheduled change time/value.
   Config config() const { return cfg_; }
   std::optional<ScheduleEntry> nextScheduleChange() const { return sched_.nextChange(nowMinuteOfDay()); }
 
 private:
+  // Block: Dependencies and internal state (filtered readings, schedule, optional tick logger).
   ISensor& sensor_; IActuator& actuator_; IDataStore& store_;
   Config cfg_; MovingAverageFilter filter_; Schedule sched_; TickLogger* logger_;
 
+  // Block: Helpers—parse mode string and compute minutes since local midnight.
   static Mode parseMode(const std::string& s){ std::string t=s; std::transform(t.begin(),t.end(),t.begin(),::tolower);
     if(t=="off") return Mode::Off; if(t=="heat") return Mode::Heat; if(t=="cool") return Mode::Cool; return Mode::Off; }
   static int nowMinuteOfDay(){ std::time_t tt=std::time(nullptr); std::tm tm{};
@@ -340,6 +360,8 @@ private:
 #endif
     return tm.tm_hour*60 + tm.tm_min;
   }
+
+  // Block: Heating control with hysteresis—turn on below (setpoint - deadband), turn off slightly above setpoint.
   void controlHeat(double tF){
     static bool heatOn=false;
     double onT = cfg_.setpointF - cfg_.deadbandF;
@@ -347,6 +369,8 @@ private:
     if (!heatOn && tF < onT) { actuator_.setHeat(true); actuator_.setCool(false); heatOn=true; }
     else if (heatOn && tF >= offT) { actuator_.setHeat(false); heatOn=false; }
   }
+
+  // Block: Cooling control with hysteresis—turn on above (setpoint + deadband), turn off slightly below setpoint.
   void controlCool(double tF){
     static bool coolOn=false;
     double onT = cfg_.setpointF + cfg_.deadbandF;
@@ -357,6 +381,7 @@ private:
 };
 
 // ---------- CLI ----------
+// Block: Print available commands for the interactive console interface.
 static void help(){
   std::cout <<
     "Commands:\n"
@@ -371,6 +396,7 @@ static void help(){
     "  quit\n";
 }
 
+// Block: Program entry—wire up components, start control loop thread, process CLI, and shutdown cleanly.
 int main(){
   try{
     std::srand(static_cast<unsigned>(std::time(nullptr)));
